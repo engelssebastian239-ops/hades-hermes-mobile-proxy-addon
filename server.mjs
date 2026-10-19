@@ -30,29 +30,18 @@ const DEFAULT_OPTIONS = {
   public_host: '',
 };
 
-function ensureOptionsFile() {
-  try {
-    fs.mkdirSync('/data', { recursive: true });
-    // Write defaults only if file missing or empty/corrupt
-    let existing = null;
-    try { existing = JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8')); } catch {}
-    if (!existing || typeof existing !== 'object') {
-      fs.writeFileSync(OPTIONS_FILE, JSON.stringify(DEFAULT_OPTIONS), 'utf8');
-    }
-  } catch {}
-}
-
-async function readOptions(retries = 3, delayMs = 2000) {
-  ensureOptionsFile();
+async function readOptions(retries = 10, delayMs = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
-      return JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
-    } catch {
-      if (i < retries - 1) {
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
+      const raw = fs.readFileSync(OPTIONS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {}
+    if (i < retries - 1) {
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
+  // HA never wrote options.json — use safe defaults so add-on stays running
   return DEFAULT_OPTIONS;
 }
 

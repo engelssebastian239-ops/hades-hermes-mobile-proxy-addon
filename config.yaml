@@ -1,6 +1,6 @@
 name: HERMES Mobile Private Proxy
 slug: hades_hermes_mobile_proxy
-version: "0.1.0-m5.77"
+version: "0.1.0-m5.78"
 description: "Loopback-only proxy to the existing Hermes dashboard over private Tailscale HTTPS"
 arch:
   - aarch64
