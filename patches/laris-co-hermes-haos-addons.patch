@@ -1,0 +1,128 @@
+diff --git a/hermes-agent/Dockerfile b/hermes-agent/Dockerfile
+index 2ebdfeac387bbfdb1a4531724644f20d2e0a0f8e..3ad10b81e227495f47baf7947fe4f7f03a2d7e5d 100644
+--- a/hermes-agent/Dockerfile
++++ b/hermes-agent/Dockerfile
+@@ -27,6 +27,12 @@ FROM nousresearch/hermes-agent@sha256:143bdb9086bb2db645346179f11091e621ef6b7f4f
+ RUN apt-get update && apt-get install -y --no-install-recommends nginx-light \
+     && rm -rf /var/lib/apt/lists/*
+ 
++# Backport the pinned Hermes 0.20.5 bearer-ticket log fix at image build time.
++# The patcher fails closed if either reviewed source context has drifted.
++COPY apply_hermes_ticket_redaction.py /tmp/apply_hermes_ticket_redaction.py
++RUN python3 /tmp/apply_hermes_ticket_redaction.py /opt/hermes \
++    && rm /tmp/apply_hermes_ticket_redaction.py
++
+ # Upstream builds Vite with its default `base: "/"`.  The Python backend can
+ # rewrite the initial index.html for X-Forwarded-Prefix, but Vite's lazy-route
+ # preload helper remains root-relative and escapes HA ingress on CHAT/etc.
+diff --git a/hermes-agent/apply_hermes_ticket_redaction.py b/hermes-agent/apply_hermes_ticket_redaction.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..5cf8e6d3f558e433f02a71a047abe876df3308a0
+--- /dev/null
++++ b/hermes-agent/apply_hermes_ticket_redaction.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python3
++"""Fail-closed source patch for the pinned Hermes Agent 0.20.5 image."""
++from __future__ import annotations
++
++import os
++from pathlib import Path
++import sys
++import tempfile
++
++_TICKET_OLD = '''        if entry is None:
++            # Truncate ticket value in the error so misuse never logs the
++            # secret in full.
++            truncated = (ticket[:8] + "…") if ticket else "<empty>"
++            raise TicketInvalid(f"unknown ticket: {truncated}")
++'''
++_TICKET_NEW = '''        if entry is None:
++            # This exception is copied into audit free text; never reflect a credential.
++            raise TicketInvalid("unknown ticket")
++'''
++_UVICORN_OLD = '''    config = uvicorn.Config(
++        app, host=host, port=port, log_level="warning",
++'''
++_UVICORN_NEW = '''    config = uvicorn.Config(
++        app, host=host, port=port, log_level="warning",
++        access_log=False,
++'''
++
++
++def _replace_once(source: str, old: str, new: str, label: str) -> str:
++    count = source.count(old)
++    if count != 1:
++        raise ValueError(f"{label}: expected one pinned-source match, found {count}")
++    return source.replace(old, new, 1)
++
++
++def _atomic_write(path: Path, text: str) -> None:
++    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
++    try:
++        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
++            stream.write(text)
++        os.chmod(temporary, path.stat().st_mode & 0o777)
++        os.replace(temporary, path)
++    finally:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
++
++
++def patch_tree(root: Path) -> tuple[Path, Path]:
++    root = root.resolve(strict=True)
++    ticket = root / "hermes_cli/dashboard_auth/ws_tickets.py"
++    server = root / "hermes_cli/web_server.py"
++    for path in (ticket, server):
++        if path.is_symlink() or not path.is_file():
++            raise ValueError("pinned Hermes source file missing or not regular")
++    ticket_text = _replace_once(ticket.read_text(encoding="utf-8"), _TICKET_OLD, _TICKET_NEW, "ws_tickets.py")
++    server_text = _replace_once(server.read_text(encoding="utf-8"), _UVICORN_OLD, _UVICORN_NEW, "web_server.py")
++    compile(ticket_text, str(ticket), "exec")
++    compile(server_text, str(server), "exec")
++    _atomic_write(ticket, ticket_text)
++    _atomic_write(server, server_text)
++    return ticket, server
++
++
++if __name__ == "__main__":
++    if len(sys.argv) != 2 or Path(sys.argv[1]) != Path("/opt/hermes"):
++        raise SystemExit("Usage: patch the pinned Hermes source only at /opt/hermes during image build")
++    patch_tree(Path("/opt/hermes"))
++    print("Applied pinned Hermes ticket-log patch in image layer")
+diff --git a/hermes-agent/rootfs/etc/nginx/hermes-ingress.conf b/hermes-agent/rootfs/etc/nginx/hermes-ingress.conf
+index 4e137fdbc2e3bef4c4cacf65dbe6c4963e859299..f136f9b369f9df623ed6b8fbe35b5f965d08a322 100644
+--- a/hermes-agent/rootfs/etc/nginx/hermes-ingress.conf
++++ b/hermes-agent/rootfs/etc/nginx/hermes-ingress.conf
+@@ -62,7 +62,8 @@ events {
+ }
+ 
+ http {
+-    access_log /dev/stdout;
++    log_format hermes_redacted '$remote_addr [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent';
++    access_log /dev/stdout hermes_redacted;
+ 
+     # Standard nginx recipe for a location that serves BOTH plain HTTP
+     # and WebSocket upgrades: only ask for "Connection: upgrade" when
+@@ -77,6 +78,22 @@ http {
+         listen 8099;
+         server_name _;
+ 
++        # The mobile WebSocket token is in the query string. Keep Nginx error
++        # diagnostics for other endpoints while discarding this route's errors.
++        location = /api/ws {
++            error_log /dev/null emerg;
++            proxy_pass http://127.0.0.1:9119;
++            proxy_http_version 1.1;
++            proxy_set_header Host 127.0.0.1;
++            proxy_set_header Origin "";
++            proxy_set_header X-Forwarded-Prefix $http_x_ingress_path;
++            proxy_set_header Upgrade $http_upgrade;
++            proxy_set_header Connection $connection_upgrade;
++            proxy_set_header X-Real-IP $remote_addr;
++            proxy_read_timeout 3600s;
++            proxy_send_timeout 3600s;
++        }
++
+         location / {
+             proxy_pass http://127.0.0.1:9119;
+             proxy_http_version 1.1;

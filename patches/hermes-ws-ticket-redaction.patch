@@ -1,0 +1,34 @@
+diff --git a/hermes_cli/dashboard_auth/ws_tickets.py b/hermes_cli/dashboard_auth/ws_tickets.py
+--- a/hermes_cli/dashboard_auth/ws_tickets.py
++++ b/hermes_cli/dashboard_auth/ws_tickets.py
+@@ -84,15 +84,14 @@ def consume_ticket(ticket: str) -> Dict[str, Any]:
+     Single-use semantics: a successful consume immediately removes the
+     ticket from the store, so a second call with the same value raises
+-    ``TicketInvalid("unknown ticket: …")``.
++    ``TicketInvalid("unknown ticket")`` without reflecting token data.
+     """
+     now = int(time.time())
+     with _lock:
+         entry = _tickets.pop(ticket, None)
+         if entry is None:
+-            # Truncate ticket value in the error so misuse never logs the
+-            # secret in full.
+-            truncated = (ticket[:8] + "…") if ticket else "<empty>"
+-            raise TicketInvalid(f"unknown ticket: {truncated}")
++            # This exception is copied into the auth audit log as a free-text
++            # reason; do not reflect any part of the bearer ticket into it.
++            raise TicketInvalid("unknown ticket")
+         expires_at, info = entry
+         if expires_at < now:
+             raise TicketInvalid("expired")
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -19029,6 +19029,7 @@
+     _is_loopback = host in ("127.0.0.1", "localhost", "::1")
+     config = uvicorn.Config(
+         app, host=host, port=port, log_level="warning",
++        access_log=False,
+         # proxy_headers defaults to False so _ws_client_is_allowed sees
+         # the real connection peer rather than X-Forwarded-For's rewritten
+         # value (which would defeat the loopback gate when behind a reverse

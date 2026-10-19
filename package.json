@@ -1,0 +1,11 @@
+{
+  "name": "hades-hermes-mobile-loopback-proxy",
+  "version": "0.1.0-m5.73",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:log-redaction": "sh scripts/test-log-redaction.sh",
+    "syntax": "node --check proxy.mjs && node --check runtime-preflight.mjs && node --check server.mjs && node --check tests/config-contract.test.mjs && node --check tests/proxy.test.mjs && node --check tests/runtime-preflight.test.mjs"
+  }
+}

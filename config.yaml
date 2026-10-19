@@ -1,0 +1,20 @@
+name: HERMES Mobile Private Proxy
+slug: hades_hermes_mobile_proxy
+version: "0.1.0-m5.73"
+description: "Loopback-only proxy to the existing Hermes dashboard over private Tailscale HTTPS"
+arch:
+  - aarch64
+startup: services
+boot: manual
+init: false
+host_network: true
+options:
+  enabled: false
+  preflight_only: false
+  allow_token_only: false
+  public_host: ""
+schema:
+  enabled: bool
+  preflight_only: bool
+  allow_token_only: bool
+  public_host: str
