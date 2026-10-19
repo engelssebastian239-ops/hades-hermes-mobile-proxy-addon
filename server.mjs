@@ -23,11 +23,22 @@ async function waitUntilStopped() {
   });
 }
 
+async function readOptions(retries = 3, delayMs = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
+    } catch {
+      if (i < retries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  return null;
+}
+
 async function main() {
-  let options;
-  try {
-    options = JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
-  } catch {
+  const options = await readOptions();
+  if (!options) {
     logEvent('configuration_unavailable');
     process.exitCode = 1;
     return;
