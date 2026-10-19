@@ -23,7 +23,27 @@ async function waitUntilStopped() {
   });
 }
 
+const DEFAULT_OPTIONS = {
+  enabled: false,
+  preflight_only: false,
+  allow_token_only: false,
+  public_host: '',
+};
+
+function ensureOptionsFile() {
+  try {
+    fs.mkdirSync('/data', { recursive: true });
+    // Write defaults only if file missing or empty/corrupt
+    let existing = null;
+    try { existing = JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8')); } catch {}
+    if (!existing || typeof existing !== 'object') {
+      fs.writeFileSync(OPTIONS_FILE, JSON.stringify(DEFAULT_OPTIONS), 'utf8');
+    }
+  } catch {}
+}
+
 async function readOptions(retries = 3, delayMs = 2000) {
+  ensureOptionsFile();
   for (let i = 0; i < retries; i++) {
     try {
       return JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
@@ -33,7 +53,7 @@ async function readOptions(retries = 3, delayMs = 2000) {
       }
     }
   }
-  return null;
+  return DEFAULT_OPTIONS;
 }
 
 async function main() {
