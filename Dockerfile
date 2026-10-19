@@ -5,5 +5,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /opt/hades-hermes-mobile-proxy
 COPY --chown=10001:10001 proxy.mjs runtime-preflight.mjs server.mjs package.json ./
+COPY --chown=10001:10001 run.sh /run.sh
+RUN chmod +x /run.sh
 USER 10001:10001
-CMD ["node", "server.mjs"]
+CMD ["/bin/sh", "/run.sh"]
